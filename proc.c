@@ -110,13 +110,25 @@ int
 growproc(int n)
 {
   uint sz;
-  
+  extern int page_allocator_type;
+
   sz = proc->sz;
   if(n > 0){
-    if((sz = allocuvm(proc->pgdir, sz, sz + n)) == 0)
-    {
-      cprintf("Allocating pages failed!\n"); // CS3320: project 2
-      return -1;
+    // For lazy allocator, just update the size without allocating physical pages
+    if(page_allocator_type == 1){
+      // Check if new size would exceed KERNBASE
+      if(sz + n >= KERNBASE){
+        cprintf("Allocating pages failed!\n");
+        return -1;
+      }
+      sz = sz + n;
+    } else {
+      // Default allocator: allocate physical pages immediately
+      if((sz = allocuvm(proc->pgdir, sz, sz + n)) == 0)
+      {
+        cprintf("Allocating pages failed!\n"); // CS3320: project 2
+        return -1;
+      }
     }
   } else if(n < 0){
     if((sz = deallocuvm(proc->pgdir, sz, sz + n)) == 0)
