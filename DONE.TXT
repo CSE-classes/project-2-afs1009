@@ -1,0 +1,87 @@
+Name: Ahmad Salem
+UTA ID: 1002141009
+
+Project 2: Lazy Page Allocator for xv6 OS Kernel
+
+This implementation successfully adds lazy page allocation functionality to the xv6 operating system kernel.
+
+CHANGES MADE:
+
+1. sysproc.c (lines 101-109):
+   - Removed the rejection code in sys_set_page_allocator() that was preventing the lazy allocator from being enabled
+   - The function now accepts both allocator types (0 = DEFAULT, 1 = LAZY)
+
+2. proc.c (lines 107-143):
+   - Modified growproc() function to support lazy page allocation
+   - When page_allocator_type == 1 (LAZY mode):
+     * For positive n (growing heap): Updates proc->sz without allocating physical pages
+     * Validates that new size doesn't exceed KERNBASE limit
+   - When page_allocator_type == 0 (DEFAULT mode):
+     * Maintains original behavior by calling allocuvm() to allocate pages immediately
+   - For negative n (shrinking heap): Both modes call deallocuvm() to free pages
+
+3. trap.c (lines 1-94):
+   - Added declaration for mappages() function (line 12)
+   - Implemented lazy page allocation in the page fault handler (lines 51-94)
+   - Page fault handling logic:
+     * Checks if lazy allocator is enabled (page_allocator_type == 1)
+     * Retrieves faulting virtual address using rcr2()
+     * Rounds address down to page boundary using PGROUNDDOWN()
+     * Validates address is within valid heap range (>= PGSIZE and < proc->sz)
+     * Allocates physical page using kalloc()
+     * Clears the page with memset()
+     * Maps the page using mappages() with appropriate permissions (PTE_W|PTE_U)
+     * Returns successfully if allocation succeeds, allowing execution to continue
+     * Prints "Unhandled page fault!" and falls through to default handler if:
+       - Address is outside valid range
+       - Physical page allocation fails
+       - Page mapping fails
+       - Default allocator is being used
+
+HOW IT WORKS:
+
+The lazy page allocator delays the allocation of physical memory pages until they are actually accessed:
+
+1. When sbrk() is called with a positive value:
+   - DEFAULT allocator: Immediately allocates physical pages and creates page table mappings
+   - LAZY allocator: Only updates the process size (proc->sz) without allocating pages
+
+2. When the process accesses a lazily-allocated address:
+   - CPU generates a page fault (T_PGFLT) because the page table entry is not present
+   - The trap() handler catches this fault
+   - If in LAZY mode and address is valid, allocates the page on-demand
+   - Execution continues seamlessly
+
+3. When sbrk() is called with a negative value (shrinking heap):
+   - Both allocators call deallocuvm() to free pages and update size
+
+EXPECTED TEST RESULTS:
+
+All 6 test cases should pass:
+- Test 1: sbrk(10) - LAZY allocator doesn't allocate frames immediately
+- Test 2: Writing valid bytes - LAZY allocator allocates on first access
+- Test 3: sbrk(+) -> sbrk(-) -> write - Both allocators handle same-page operations
+- Test 4: Multiple pages - LAZY allocator only allocates accessed pages
+- Test 5: Allocating too much - Both allocators properly reject oversized requests
+- Test 6: Writing unallocated page above break - Both allocators properly reject invalid access
+
+COMPILATION:
+
+The code compiles successfully without errors or warnings using the provided Makefile.
+Run "make" to build the kernel and user programs.
+Run "make qemu-nox CPUS=1" to test in QEMU.
+
+TESTING:
+
+To test the implementation:
+1. Boot xv6: make qemu-nox CPUS=1
+2. Run default allocator tests: proj2_test 0
+3. Run lazy allocator tests: proj2_test 1
+
+
+NOTES:
+
+- The page fault handler only activates for the lazy allocator, ensuring backward
+  compatibility with existing code that expects the default behavior
+
+- Physical pages are freed properly when deallocuvm() is called, preventing memory leaks
