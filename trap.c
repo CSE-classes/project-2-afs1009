@@ -8,6 +8,9 @@
 #include "traps.h"
 #include "spinlock.h"
 
+// Declaration for mappages (defined in vm.c)
+int mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm);
+
 // Interrupt descriptor table (shared by all CPUs).
 struct gatedesc idt[256];
 extern uint vectors[];  // in vectors.S: array of 256 entry pointers
@@ -46,12 +49,48 @@ trap(struct trapframe *tf)
     return;
   }
  // CS 3320 project 2
- // You might need to change the folloiwng default page fault handling
- // for your project 2
- if(tf->trapno == T_PGFLT){                 // CS 3320 project 2
-    uint faulting_va;                       // CS 3320 project 2
-    faulting_va = rcr2();                   // CS 3320 project 2
-    cprintf("Unhandled page fault for va:0x%x!\n", faulting_va);     // CS 3320 project 2
+ // Lazy page allocation handling
+ if(tf->trapno == T_PGFLT){
+    extern int page_allocator_type;
+    uint faulting_va;
+    char *mem;
+    uint page_va;
+
+    faulting_va = rcr2();  // Get the faulting virtual address
+
+    // Only handle page fault for lazy allocator
+    if(page_allocator_type == 1 && proc != 0){
+      // Round down to page boundary
+      page_va = PGROUNDDOWN(faulting_va);
+
+      // Check if the faulting address is within the valid heap range
+      // Valid range: from PGSIZE (first page is guard page) to proc->sz
+      if(page_va >= PGSIZE && page_va < proc->sz){
+        // Allocate a physical page
+        mem = kalloc();
+        if(mem == 0){
+          cprintf("Unhandled page fault!\n");
+        } else {
+          // Clear the page
+          memset(mem, 0, PGSIZE);
+
+          // Map the page with user read/write permissions
+          if(mappages(proc->pgdir, (char*)page_va, PGSIZE, v2p(mem), PTE_W|PTE_U) < 0){
+            cprintf("Unhandled page fault!\n");
+            kfree(mem);
+          } else {
+            // Successfully handled the page fault, return
+            return;
+          }
+        }
+      } else {
+        // Address is outside valid range
+        cprintf("Unhandled page fault!\n");
+      }
+    } else {
+      // Default allocator or not a process context
+      cprintf("Unhandled page fault!\n");
+    }
  }
 
 
